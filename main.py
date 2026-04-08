@@ -18,6 +18,7 @@ from algo import AlgoScorer
 from trade import TradeExecutor, TradeStatus
 from bot import TelegramBot
 from wallet import Wallet
+from ai_analysis import AIAnalyzer
 
 logging.basicConfig(
     level=logging.INFO,
@@ -61,8 +62,10 @@ class SniperBot:
             self.wallet = Wallet(config.WALLET_PRIVATE_KEY)
 
         self.algo = AlgoScorer()
+        self.ai = AIAnalyzer()
         self.trade = TradeExecutor(self.wallet)
-        self.trade.algo = self.algo # Link algo to trade executor
+        self.trade.algo = self.algo # Link algo
+        self.trade.ai = self.ai     # Link AI
         self.scanner = Scanner(self.algo)
         self.telegram = TelegramBot(self.trade)
         self.running = False
@@ -137,6 +140,24 @@ class SniperBot:
                 pump_token.dev_holding_pct,
                 status
             )
+
+            # --- AI Deep Scan ---
+            logger.info(f"🧠 [AI DEEP SCAN] Analyzing launch behavioral patterns for {pump_token.mint[:8]}...")
+            ai_data = {
+                "mint": pump_token.mint,
+                "creator": pump_token.creator,
+                "dev_holding_pct": pump_token.dev_holding_pct,
+                "coins_per_hour": pump_token.creator_history.get("coins_per_hour", 0),
+                "initial_buy_pct": pump_token.dev_holding_pct 
+            }
+            ai_report = await self.ai.analyze_launch(ai_data)
+            
+            if ai_report.get("is_rug_likely"):
+                 logger.warning(f"🚩 [AI REJECTION] {ai_report.get('top_risk')}: {ai_report.get('reasoning')}")
+                 await self.telegram.handle_trade_failed(pump_token.mint, f"AI Detected Rug: {ai_report.get('top_risk')}")
+                 return
+
+            logger.info(f"✅ [AI PASSED] Confidence: {ai_report.get('confidence_score')}% | Reasoning: {ai_report.get('reasoning')[:50]}...")
 
             self.trade.current_scanned_token = pump_token
             position = await self.trade.execute_buy(

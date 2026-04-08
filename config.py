@@ -63,6 +63,9 @@ class Config:
     MIN_SCORE: int = 90
     DEV_BUY_THRESHOLD: float = 0.15
     
+    GROQ_API_KEY: str = os.getenv("GROQ_API_KEY", "")
+    GROQ_MODEL: str = "gpt-oss-120b"
+    
     PROFIT_TARGET_1: float = float(os.getenv("PROFIT_TARGET_1", "0.25"))      # +25% Micro-Sniper
     SELL_PORTION_1: float = float(os.getenv("SELL_PORTION_1", "1.0"))       # Sell 100%
     TRAILING_STOP_LOSS: float = float(os.getenv("TRAILING_STOP_LOSS", "-0.20")) # -20% from peak

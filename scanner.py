@@ -478,6 +478,7 @@ class Scanner:
             pump_token.risk_factors = score_result["risk_factors"]
             pump_token.has_mint_authority = score_result["has_mint_authority"]
             pump_token.dev_holding_pct = score_result["dev_holding_pct"]
+            pump_token.creator_history = score_result["creator_history"]
 
             self.scanned_tokens[mint] = pump_token
 

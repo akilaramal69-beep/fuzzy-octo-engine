@@ -54,6 +54,7 @@ class TradeExecutor:
         self.simulated_positions: Dict[str, dict] = {}
         self.buy_history: List[float] = [] 
         self.algo = None # Will be set by main.py
+        self.ai = None   # Will be set by main.py
 
     async def _get_session(self) -> aiohttp.ClientSession:
         if not self.session or self.session.closed:
@@ -472,7 +473,8 @@ class TradeExecutor:
             "trailing_high": entry_price,
             "entry_time": time.time(),
             "creator": pump_token.creator if pump_token else None,
-            "initial_buy_pct": pump_token.dev_holding_pct if pump_token else 0.0
+            "initial_buy_pct": pump_token.dev_holding_pct if pump_token else 0.0,
+            "price_history": [entry_price]
         }
 
         logger.info(f"[SIM] BUY executed: {mint[:8]}... @ {entry_price:.9f} | {tokens_bought:.0f} tokens")
@@ -520,12 +522,18 @@ class TradeExecutor:
                 if current_price > sim_pos["trailing_high"]:
                     sim_pos["trailing_high"] = current_price
 
+                # Keep history for AI
+                sim_pos["price_history"].append(current_price)
+                if len(sim_pos["price_history"]) > 20:
+                    sim_pos["price_history"].pop(0)
+
                 pnl_pct = ((current_price - sim_pos["entry_price"]) / sim_pos["entry_price"]) * 100 if sim_pos["entry_price"] > 0 else 0
 
                 # Log price every ~30s or on significant move
                 logger.info(f"[SIM] Pos {mint[:8]}: PnL {pnl_pct:+.1f}% | Price {current_price:.9f} | Peak {sim_pos['trailing_high']:.9f}")
 
-                # 0. AI Smart Analysis (Emergency Exit)
+                # 0. AI Smart Analysis (Emergency Rug & Exit Exit)
+                # 0.1 Local Rug Check
                 if self.algo and sim_pos.get("creator"):
                     ai_result = await self.algo.ai_sell_analysis(
                         mint, 
@@ -535,6 +543,22 @@ class TradeExecutor:
                     )
                     if ai_result.get("should_sell"):
                         logger.warning(f"🚨 [AI EXIT] {ai_result['reason']}! Selling immediately.")
+                        await self._simulate_sell(mint, 1.0)
+                        break
+
+                # 0.2 External AI Momentum Analysis (Profit Optimization)
+                if self.ai and len(sim_pos["price_history"]) >= 5:
+                    exit_ai = await self.ai.analyze_exit_timing(
+                        {
+                            "entry_price": sim_pos["entry_price"], 
+                            "current_price": current_price, 
+                            "pnl_pct": pnl_pct, 
+                            "trailing_high": sim_pos["trailing_high"]
+                        },
+                        sim_pos["price_history"]
+                    )
+                    if exit_ai.get("signal") == "SELL":
+                        logger.info(f"✨ [AI OPTIMIZER] Predicted Peak! Signal: SELL | Reason: {exit_ai.get('reason')}")
                         await self._simulate_sell(mint, 1.0)
                         break
 
