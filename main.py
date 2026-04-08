@@ -70,6 +70,9 @@ class SniperBot:
         self.telegram = TelegramBot(self.trade)
         self.running = False
 
+        if not config.GROQ_API_KEY:
+             logger.warning("⚠️ [AI] GROQ_API_KEY is missing! AI Deep Scan and Smart Exit will be limited.")
+
         self.trade.simulation_mode = config.SIMULATION_MODE
         self.trade.simulated_balance = config.SIMULATION_BALANCE_SOL
         self.telegram.simulation_mode = config.SIMULATION_MODE
