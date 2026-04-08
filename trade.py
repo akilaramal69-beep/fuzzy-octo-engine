@@ -53,6 +53,10 @@ class TradeExecutor:
         self.simulated_balance = config.SIMULATION_BALANCE_SOL
         self.simulated_positions: Dict[str, dict] = {}
         self.buy_history: List[float] = [] 
+        self.buy_lock = asyncio.Lock()
+        self.stats_file = "trade_stats.json"
+        self._load_stats()
+        
         self.algo = None # Will be set by main.py
         self.ai = None   # Will be set by main.py
 
@@ -99,18 +103,20 @@ class TradeExecutor:
         if amount_sol is None:
             amount_sol = config.TRADE_AMOUNT_SOL
 
-        # Check hourly limit
-        if await self._is_over_hourly_limit():
-            logger.warning(f"🚫 [LIMIT] Already sniped {config.MAX_HOURLY_SNIPES} tokens in the last hour. Skipping {mint[:10]}...")
-            return None
+        async with self.buy_lock:
+            # Check hourly limit
+            if await self._is_over_hourly_limit():
+                logger.warning(f"🚫 [LIMIT] Already sniped {config.MAX_HOURLY_SNIPES} tokens in the last hour. Skipping {mint[:10]}...")
+                return None
 
-        if self.simulation_mode:
-            pos = await self._simulate_buy(mint, amount_sol)
-            if pos:
-                self.buy_history.append(time.time())
-            return pos
+            if self.simulation_mode:
+                pos = await self._simulate_buy(mint, amount_sol)
+                if pos:
+                    self.buy_history.append(time.time())
+                    self._save_stats()
+                return pos
 
-        await self._update_dynamic_fees()
+            await self._update_dynamic_fees()
 
         position = TradePosition(
             mint=mint,
@@ -147,6 +153,7 @@ class TradeExecutor:
                 position.amount_tokens = amount_sol / position.entry_price if position.entry_price > 0 else 0
 
                 self.buy_history.append(time.time())
+                self._save_stats()
                 logger.info(f"Buy executed: {mint} @ {position.entry_price}")
                 return position
 
@@ -410,12 +417,35 @@ class TradeExecutor:
 
             await asyncio.sleep(2)
 
-    async def _is_over_hourly_limit(self) -> bool:
-        """Limit trades per hour to prevent over-exposure."""
         now = time.time()
         # Clean history
         self.buy_history = [t for t in self.buy_history if now - t < 3600]
-        return len(self.buy_history) >= config.MAX_HOURLY_SNIPES
+        count = len(self.buy_history)
+        if count >= config.MAX_HOURLY_SNIPES:
+             return True
+        
+        logger.info(f"📈 [THROTTLE] Trade Count: {count}/{config.MAX_HOURLY_SNIPES} in last 1h")
+        return False
+
+    def _load_stats(self):
+        try:
+            if os.path.exists(self.stats_file):
+                with open(self.stats_file, 'r') as f:
+                    data = json.load(f)
+                    self.buy_history = data.get("buy_history", [])
+                    logger.info(f"Loaded {len(self.buy_history)} historical snipes from disk.")
+        except Exception as e:
+            logger.error(f"Failed to load stats: {e}")
+
+    def _save_stats(self):
+        try:
+            # Only keep last hour in saved file to keep it small
+            now = time.time()
+            clean_history = [t for t in self.buy_history if now - t < 3600]
+            with open(self.stats_file, 'w') as f:
+                json.dump({"buy_history": clean_history}, f)
+        except Exception as e:
+            logger.error(f"Failed to save stats: {e}")
 
     async def get_sol_balance(self) -> float:
         if self.simulation_mode:
